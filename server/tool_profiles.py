@@ -4,6 +4,11 @@ Tool profiles for different use cases and LLM providers
 
 # Define tool profiles with their included categories
 TOOL_PROFILES = {
+    "codex-production": {
+        "name": "Codex Production",
+        "description": "Диагностика проекта и инструменты DSL, MIDI, FX, рендера",
+        "categories": ["Diagnostics", "DSL", "Advanced MIDI Generation", "FX", "Rendering & Freezing"]
+    },
     "groq-essential": {
         "name": "Groq Essential",
         "description": "Core REAPER functionality for Groq (max 128 tools)",

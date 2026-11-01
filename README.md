@@ -1,3 +1,33 @@
+# REAPER MCP — доработки для Codex
+
+Форк добавляет надёжный файловый транспорт и диагностику активного проекта.
+Исходный README upstream сохранён ниже; для новой установки использовать этот раздел.
+
+| Что | Где |
+|---|---|
+| Skill управления REAPER | [.agents/skills/reaper-control/SKILL.md](.agents/skills/reaper-control/SKILL.md) |
+| Подключение и проверка | [setup.md](.agents/skills/reaper-control/references/setup.md) |
+| Возможности и план | [capabilities.md](.agents/skills/reaper-control/references/capabilities.md) |
+| План общего музыкального набора | [MUSIC-TOOLKIT.md](docs/MUSIC-TOOLKIT.md) |
+| Профиль | `python -m server.app --profile codex-production` |
+| Тесты транспорта | `python -m unittest discover -s tests -p test_bridge_reliability.py -v` |
+| Lua-регрессии | запустить `tests/test_bridge_lua.lua` в REAPER |
+
+Skill можно скопировать из `.agents/skills/reaper-control` в `~/.agents/skills/`.
+В Codex настроить `command` на Python окружения, `cwd` на клон и указать
+`args = ["-m", "server.app", "--profile", "codex-production"]`.
+На Mac установить мост `bash scripts/install_bridge.sh` и запустить
+`mcp_bridge_codex.lua` из каталога Scripts REAPER. Старые команды из
+`mcp_bridge_data` не переносить в новую папку обмена `mcp_bridge_data_v2`.
+
+Изменения: уникальные запросы разных клиентов, атомарная запись, обработка
+номеров выше 1000, JSON с Unicode и путями Windows, корректный размер и длительность тактов при постоянном размере, ошибка при потере
+связи вместо фиктивных 120 BPM, `reaper_health` и `reaper_project_snapshot`.
+Снимок содержит session ID проекта и GUID дорожек; session ID действует
+до перезапуска моста. Остальные обёртки upstream не считаются полностью проверенными.
+
+---
+
 # REAPER MCP Server
 
 An MCP (Model Context Protocol) server that exposes [REAPER DAW](https://www.reaper.fm/) functionality through a clean API interface.

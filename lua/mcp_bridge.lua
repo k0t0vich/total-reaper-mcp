@@ -4,12 +4,15 @@
 -- - All DSL (Domain Specific Language) functions for natural language control
 -- Profile selection is handled by the Python MCP server, not this bridge
 
-local bridge_dir = reaper.GetResourcePath() .. '/Scripts/mcp_bridge_data/'
+local bridge_dir = reaper.GetResourcePath() .. '/Scripts/mcp_bridge_data_v2/'
 
 -- Create bridge directory if it doesn't exist
 local function ensure_dir()
     reaper.RecursiveCreateDirectory(bridge_dir, 0)
 end
+
+local JSON_ARRAY = {}
+local function array() return setmetatable({}, JSON_ARRAY) end
 
 -- Simple JSON encoding (minimal implementation)
 local function encode_json(v)
@@ -20,10 +23,15 @@ local function encode_json(v)
     elseif type(v) == "number" then
         return tostring(v)
     elseif type(v) == "string" then
-        return string.format('"%s"', v:gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r'))
+        local escaped = v:gsub('[%z\1-\31\\"]', function(c)
+            if c == '"' then return '\\"' end
+            if c == '\\' then return '\\\\' end
+            return string.format('\\u%04x', string.byte(c))
+        end)
+        return '"' .. escaped .. '"'
     elseif type(v) == "table" then
         local parts = {}
-        local is_array = #v > 0
+        local is_array = #v > 0 or getmetatable(v) == JSON_ARRAY
         if is_array then
             for i, item in ipairs(v) do
                 table.insert(parts, encode_json(item))
@@ -43,119 +51,9 @@ local function encode_json(v)
     end
 end
 
--- Better JSON decoding that handles arrays properly
-local function decode_json(str)
-    if not str or str == "" then return nil end
-    
-    -- Remove whitespace
-    str = str:gsub("^%s*(.-)%s*$", "%1")
-    
-    -- Very basic JSON decoder
-    if str == "null" then return nil
-    elseif str == "true" then return true
-    elseif str == "false" then return false
-    elseif str:match("^%-?%d+%.?%d*$") then return tonumber(str)
-    elseif str:match('^"(.*)"$') then 
-        -- Unescape string
-        local s = str:match('^"(.*)"$')
-        s = s:gsub('\\n', '\n'):gsub('\\r', '\r'):gsub('\\"', '"')
-        return s
-    elseif str:match("^%[.*%]$") then
-        -- Array - improved parsing
-        local arr = {}
-        local content = str:sub(2, -2)
-        if content ~= "" then
-            -- Handle nested structures better
-            local i = 1
-            local pos = 1
-            local depth = 0
-            local start = 1
-            
-            while pos <= #content do
-                local char = content:sub(pos, pos)
-                if char == '[' or char == '{' then
-                    depth = depth + 1
-                elseif char == ']' or char == '}' then
-                    depth = depth - 1
-                elseif char == ',' and depth == 0 then
-                    -- Found a top-level comma
-                    local value = content:sub(start, pos - 1)
-                    arr[i] = decode_json(value:match("^%s*(.-)%s*$"))
-                    i = i + 1
-                    start = pos + 1
-                end
-                pos = pos + 1
-            end
-            
-            -- Don't forget the last element
-            if start <= #content then
-                local value = content:sub(start)
-                arr[i] = decode_json(value:match("^%s*(.-)%s*$"))
-            end
-        end
-        return arr
-    elseif str:match("^{.*}$") then
-        -- Object - improved parsing
-        local obj = {}
-        local content = str:sub(2, -2)
-        
-        -- Better object parsing that handles nested values
-        local pos = 1
-        while pos <= #content do
-            -- Find key
-            local key_start = content:find('"', pos)
-            if not key_start then break end
-            local key_end = content:find('"', key_start + 1)
-            if not key_end then break end
-            local key = content:sub(key_start + 1, key_end - 1)
-            
-            -- Find colon
-            local colon = content:find(':', key_end + 1)
-            if not colon then break end
-            
-            -- Find value (handle nested structures)
-            local value_start = colon + 1
-            while value_start <= #content and content:sub(value_start, value_start):match("%s") do
-                value_start = value_start + 1
-            end
-            
-            local value_end = value_start
-            local depth = 0
-            local in_string = false
-            local escape = false
-            
-            while value_end <= #content do
-                local char = content:sub(value_end, value_end)
-                
-                if escape then
-                    escape = false
-                elseif char == '\\' then
-                    escape = true
-                elseif char == '"' and not escape then
-                    in_string = not in_string
-                elseif not in_string then
-                    if char == '[' or char == '{' then
-                        depth = depth + 1
-                    elseif char == ']' or char == '}' then
-                        depth = depth - 1
-                    elseif (char == ',' or char == '}') and depth == 0 then
-                        break
-                    end
-                end
-                
-                value_end = value_end + 1
-            end
-            
-            local value = content:sub(value_start, value_end - 1)
-            obj[key] = decode_json(value:match("^%s*(.-)%s*$"))
-            
-            pos = value_end + 1
-        end
-        
-        return obj
-    end
-    return nil
-end
+-- Парсер сохраняет Unicode, запятые в строках и пути Windows.
+local source_dir = debug.getinfo(1, "S").source:sub(2):match("^(.*)[/\\]")
+local decode_json = dofile(source_dir .. "/mcp_json.lua").decode
 
 -- Read file contents
 local function read_file(filepath)
@@ -322,16 +220,11 @@ end
 
 -- Convert bars to time duration
 local function BarsToTime(bars, start_pos)
-    -- Get tempo at position
-    local tempo = reaper.Master_GetTempo()
-    local retval, num, denom = reaper.TimeMap_GetTimeSigAtTime(0, start_pos or 0)
-    
-    -- Calculate duration
-    local beats_per_bar = num
-    local total_beats = bars * beats_per_bar
-    local duration = (total_beats / tempo) * 60
-    
-    return {ok = true, ret = duration}
+    local position = start_pos or 0
+    local num, denom = reaper.TimeMap_GetTimeSigAtTime(0, position)
+    local qn = reaper.TimeMap2_timeToQN(0, position)
+    local finish = reaper.TimeMap2_QNToTime(0, qn + bars * num * 4 / denom)
+    return {ok = true, ret = finish - position}
 end
 
 -- Find region by name
@@ -654,7 +547,7 @@ local function Stop()
 end
 
 local function GetTempo()
-    local tempo = reaper.Master_GetTempo()
+    local _, _, tempo = reaper.TimeMap_GetTimeSigAtTime(0, reaper.GetCursorPosition())
     return {ok = true, ret = tempo}
 end
 
@@ -664,12 +557,53 @@ local function SetTempo(bpm)
 end
 
 local function GetTimeSignature()
-    local retval, num, denom = reaper.TimeMap_GetTimeSigAtTime(0, reaper.GetCursorPosition())
+    local num, denom = reaper.TimeMap_GetTimeSigAtTime(0, reaper.GetCursorPosition())
     return {ok = true, numerator = num, denominator = denom}
+end
+
+local function GetBridgeHealth()
+    local names = {"MIDI_GetAllEvts", "GetMediaItemTake_Peaks", "GetSetAutomationItemInfo",
+        "TrackFX_GetNamedConfigParm", "GetSetMediaTrackInfo_String", "GetSetProjectInfo",
+        "CF_GetSWSVersion", "ReaPack_GetOwner", "JS_Window_Find"}
+    local capabilities = {}
+    for _, name in ipairs(names) do capabilities[name] = reaper.APIExists(name) end
+    return {ok = true, bridge_version = 2, reaper_version = reaper.GetAppVersion(),
+        resource_path = reaper.GetResourcePath(), capabilities = capabilities}
+end
+
+local function GetProjectSnapshot()
+    local project, path = reaper.EnumProjects(-1, "")
+    local cursor = reaper.GetCursorPositionEx(project)
+    local num, denom, tempo = reaper.TimeMap_GetTimeSigAtTime(project, cursor)
+    local start_time, end_time = reaper.GetSet_LoopTimeRange2(project, false, false, 0, 0, false)
+    local tracks = array()
+    for i = 0, reaper.CountTracks(project) - 1 do
+        local tr = reaper.GetTrack(project, i)
+        local _, name = reaper.GetTrackName(tr)
+        local fx = array()
+        for f = 0, reaper.TrackFX_GetCount(tr) - 1 do
+            local _, fx_name = reaper.TrackFX_GetFXName(tr, f, "")
+            fx[#fx + 1] = {index = f, guid = reaper.TrackFX_GetFXGUID(tr, f), name = fx_name,
+                enabled = reaper.TrackFX_GetEnabled(tr, f), offline = reaper.TrackFX_GetOffline(tr, f)}
+        end
+        tracks[#tracks + 1] = {index = i, guid = reaper.GetTrackGUID(tr), name = name,
+            selected = reaper.IsTrackSelected(tr), volume = reaper.GetMediaTrackInfo_Value(tr, "D_VOL"),
+            pan = reaper.GetMediaTrackInfo_Value(tr, "D_PAN"), mute = reaper.GetMediaTrackInfo_Value(tr, "B_MUTE"),
+            solo = reaper.GetMediaTrackInfo_Value(tr, "I_SOLO"), folder_depth = reaper.GetMediaTrackInfo_Value(tr, "I_FOLDERDEPTH"),
+            item_count = reaper.CountTrackMediaItems(tr), envelope_count = reaper.CountTrackEnvelopes(tr),
+            send_count = reaper.GetTrackNumSends(tr, 0), fx = fx}
+    end
+    return {ok = true, project_id = reaper.GetExtState("reaper_mcp_v2", "instance") .. ":" .. tostring(project), path = path,
+        name = reaper.GetProjectName(project, ""), dirty = reaper.IsProjectDirty(project),
+        state_change_count = reaper.GetProjectStateChangeCount(project), play_state = reaper.GetPlayStateEx(project),
+        cursor = cursor, tempo = tempo, numerator = num, denominator = denom,
+        time_selection = {start = start_time, finish = end_time}, track_count = #tracks, tracks = tracks}
 end
 
 -- Export function table for DSL
 DSL_FUNCTIONS = {
+    GetBridgeHealth = GetBridgeHealth,
+    GetProjectSnapshot = GetProjectSnapshot,
     -- Track info
     GetTrackInfo = GetTrackInfo,
     GetAllTracksInfo = GetAllTracksInfo,
@@ -712,8 +646,17 @@ DSL_FUNCTIONS = {
 
 -- Main processing function
 local function process_request()
-    -- Look for any request files with numbered pattern
-    for i = 1, 1000 do
+    local requests = {}
+    local index = 0
+    while true do
+        local name = reaper.EnumerateFiles(bridge_dir, index)
+        if not name then break end
+        local id = name:match("^request_([%w_-]+)%.json$")
+        if id then requests[#requests + 1] = id end
+        index = index + 1
+    end
+    table.sort(requests)
+    for _, i in ipairs(requests) do
         local numbered_request_file = bridge_dir .. 'request_' .. i .. '.json'
         local numbered_response_file = bridge_dir .. 'response_' .. i .. '.json'
         
@@ -723,7 +666,7 @@ local function process_request()
                 -- Read and process request
                 local request_data = read_file(numbered_request_file)
                 if request_data then
-                    reaper.ShowConsoleMsg("Processing request " .. i .. ": " .. request_data .. "\n")
+
                     
                     -- Parse the request
                     local request = decode_json(request_data)
@@ -4018,7 +3961,7 @@ local function process_request()
                     
                     -- Write response
                     local response_json = encode_json(response)
-                    reaper.ShowConsoleMsg("Sending response " .. i .. ": " .. response_json .. "\n")
+
                     write_file(numbered_response_file, response_json)
                 end
             end
@@ -4042,7 +3985,10 @@ ensure_dir()
 reaper.ShowConsoleMsg("REAPER MCP Bridge (File-based, Full API) started\n")
 reaper.ShowConsoleMsg("Bridge directory: " .. bridge_dir .. "\n")
 
+local instance = reaper.genGuid()
+reaper.SetExtState("reaper_mcp_v2", "instance", instance, false)
 function main()
+    if reaper.GetExtState("reaper_mcp_v2", "instance") ~= instance then return end
     process_request()
     reaper.defer(main)
 end

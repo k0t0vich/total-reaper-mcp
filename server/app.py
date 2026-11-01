@@ -38,6 +38,7 @@ mcp = FastMCP("reaper-mcp")
 relay_client = None
 
 # Import all tool modules (we'll selectively register based on profile)
+from .tools.diagnostics import register_diagnostics_tools
 from .tools.tracks import register_track_tools
 from .tools.core_api import register_core_api_tools
 from .tools.media_items import register_media_items_tools
@@ -87,6 +88,7 @@ from .dsl.health_check import verify_dsl_installation
 
 # Category mapping
 CATEGORY_REGISTRY = {
+    "Diagnostics": register_diagnostics_tools,
     "DSL": register_dsl_tools,
     "Core API": register_core_api_tools,
     "Tracks": register_track_tools,
@@ -181,7 +183,7 @@ async def main_async(args):
     logger.info("REAPER MCP Server - Modern Pattern")
     logger.info("=" * 60)
     logger.info(f"Bridge directory: {BRIDGE_DIR}")
-    logger.info("Make sure mcp_bridge_file_v2.lua is running in REAPER!")
+    logger.info("Make sure mcp_bridge_codex.lua is running in REAPER!")
     logger.info("")
     
     # Register tools based on profile
@@ -264,7 +266,7 @@ def main():
         logger.info("REAPER MCP Server - Modern Pattern")
         logger.info("=" * 60)
         logger.info(f"Bridge directory: {BRIDGE_DIR}")
-        logger.info("Make sure mcp_bridge_file_v2.lua is running in REAPER!")
+        logger.info("Make sure mcp_bridge_codex.lua is running in REAPER!")
         logger.info("")
         
         # Register tools based on profile

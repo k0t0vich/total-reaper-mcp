@@ -69,3 +69,8 @@ coverage.xml
 *.temp
 /tmp/
 /temp/
+
+# Локальное окружение и результаты проверки моста
+.venv/
+.venv-new/
+tests/bridge_lua_result.txt

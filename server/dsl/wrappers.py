@@ -661,15 +661,16 @@ async def context_get_tracks(bridge) -> OperationResult:
 async def context_get_tempo_info(bridge) -> OperationResult:
     """Get tempo and time signature info"""
     try:
-        # Get tempo
         tempo_result = await bridge.call_lua("GetTempo", [])
-        tempo = tempo_result.get("ret", 120.0) if tempo_result.get("ok") else 120.0
-        
-        # Get time signature
+        if not tempo_result.get("ok"):
+            raise RuntimeError(tempo_result.get("error", "Не удалось прочитать темп"))
         ts_result = await bridge.call_lua("GetTimeSignature", [])
-        numerator = ts_result.get("numerator", 4) if ts_result.get("ok") else 4
-        denominator = ts_result.get("denominator", 4) if ts_result.get("ok") else 4
-        
+        if not ts_result.get("ok"):
+            raise RuntimeError(ts_result.get("error", "Не удалось прочитать размер"))
+        tempo = tempo_result["ret"]
+        numerator = ts_result["numerator"]
+        denominator = ts_result["denominator"]
+
         return OperationResult(
             success=True,
             action="context_get_tempo_info",

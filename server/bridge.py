@@ -10,6 +10,7 @@ import json
 import asyncio
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Bridge directory configuration
 BRIDGE_DIR = Path(os.environ.get(
     'REAPER_MCP_BRIDGE_DIR',
-    os.path.expanduser('~/Library/Application Support/REAPER/Scripts/mcp_bridge_data')
+    os.path.expanduser('~/Library/Application Support/REAPER/Scripts/mcp_bridge_data_v2')
 ))
 BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -35,14 +36,17 @@ class ReaperFileBridge:
     def __init__(self):
         self.bridge_dir = BRIDGE_DIR
         self.request_id = 0
+        self.client_id = uuid.uuid4().hex
         self.call_tracking = []  # Track calls during operations
         self.tracking_enabled = False
         
     async def call_lua(self, func_name: str, args: Optional[List[Any]] = None) -> Dict[str, Any]:
         """Call a Lua function and wait for response"""
         self.request_id += 1
-        request_file = self.bridge_dir / f"request_{self.request_id}.json"
-        response_file = self.bridge_dir / f"response_{self.request_id}.json"
+        request_key = f"{self.client_id}_{self.request_id}"
+        request_file = self.bridge_dir / f"request_{request_key}.json"
+        response_file = self.bridge_dir / f"response_{request_key}.json"
+        temporary_file = request_file.with_suffix(".tmp")
         
         # Write request
         request_data = {
@@ -71,8 +75,9 @@ class ReaperFileBridge:
                 logger.debug(f"Failed to log ReaScript call: {e}")
         
         try:
-            with open(request_file, 'w') as f:
+            with open(temporary_file, 'w') as f:
                 json.dump(request_data, f)
+            os.replace(temporary_file, request_file)
             
             # Wait for response (with timeout)
             start_time = asyncio.get_event_loop().time()
@@ -197,6 +202,10 @@ class ReaperFileBridge:
                     logger.debug(f"Failed to log ReaScript error: {e}")
             
             return error_response
+        finally:
+            temporary_file.unlink(missing_ok=True)
+            request_file.unlink(missing_ok=True)
+            response_file.unlink(missing_ok=True)
     
     def start_tracking(self):
         """Start tracking ReaScript calls"""
